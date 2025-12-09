@@ -3,6 +3,9 @@
 # Without this, the script continues even if a command fails. With this, the script stops at the first command that fails.
 set -e
 
+# Ensures that the exit status of a pipeline is the status of the last command to exit with a non-zero status, or zero if no command exited with a non-zero status.
+set -o pipefail
+
 # Paths
 SITES_AVAILABLE="/etc/nginx/sites-available"
 SITES_ENABLED="/etc/nginx/sites-enabled"
@@ -64,6 +67,9 @@ get_disabled_sites() {
 # Parse domain and subdomain from site name
 # e.g., "blog.example.com" -> domain="example.com", subdomain="blog"
 # e.g., "example.com" -> domain="example.com", subdomain="@/www"
+# NOTE: This logic assumes a simple "TLD.Domain" structure (last 2 parts).
+# It does NOT support compound TLDs like ".co.uk" or ".com.au".
+# We won't use compound TLDs, so this naive approach is acceptable.
 parse_domain() {
   local site="$1"
   local parts
@@ -240,7 +246,7 @@ cmd_edit() {
   
   local editor
   editor=$(get_editor)
-  sudo "$editor" "$SITES_AVAILABLE/${selected}${EXT}"
+  sudo $editor "$SITES_AVAILABLE/${selected}${EXT}"
   
   test_and_reload "$no_reload" || true
 }
@@ -301,7 +307,7 @@ cmd_mk() {
   
   local editor
   editor=$(get_editor)
-  sudo "$editor" "$file_path"
+  sudo $editor "$file_path"
   
   test_and_reload "$no_reload" || true
 }
@@ -341,7 +347,7 @@ cmd_cp() {
   
   local editor
   editor=$(get_editor)
-  sudo "$editor" "$new_path"
+  sudo $editor "$new_path"
   
   test_and_reload "$no_reload" || true
 }

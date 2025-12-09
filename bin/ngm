@@ -100,9 +100,10 @@ parse_domain() {
   fi
 }
 
-# Group sites by domain and display them
+# Group sites by domain and display them with enabled/disabled status
 display_grouped_sites() {
   local sites="$1"
+  local enabled_sites="$2"
   
   if [[ -z "$sites" ]]; then
     echo "  (none)"
@@ -110,14 +111,21 @@ display_grouped_sites() {
   fi
   
   declare -A domain_groups
+  declare -A site_status
+  
+  # Build a set of enabled sites for quick lookup
+  while IFS= read -r site; do
+    [[ -n "$site" ]] && site_status[$site]="enabled"
+  done <<< "$enabled_sites"
   
   while IFS= read -r site; do
     [[ -z "$site" ]] && continue
     read -r domain subdomain <<< "$(parse_domain "$site")"
+    # Store subdomain with its full site name for status lookup (subdomain:fullsite)
     if [[ -n "${domain_groups[$domain]}" ]]; then
-      domain_groups[$domain]="${domain_groups[$domain]},$subdomain"
+      domain_groups[$domain]="${domain_groups[$domain]},$subdomain:$site"
     else
-      domain_groups[$domain]="$subdomain"
+      domain_groups[$domain]="$subdomain:$site"
     fi
   done <<< "$sites"
   
@@ -126,8 +134,34 @@ display_grouped_sites() {
     echo -e "  ${BOLD}$domain${RESET}"
     local subs="${domain_groups[$domain]}"
     IFS=',' read -ra sub_array <<< "$subs"
-    for sub in "${sub_array[@]}"; do
-      echo -e "    ${DIM}├─${RESET} $sub"
+    
+    # Sort subdomains: @/www first, then alphabetically
+    local sorted_subs=()
+    local www_entry=""
+    for entry in "${sub_array[@]}"; do
+      local sub="${entry%%:*}"
+      if [[ "$sub" == "@/www" ]]; then
+        www_entry="$entry"
+      else
+        sorted_subs+=("$entry")
+      fi
+    done
+    
+    # Sort remaining subdomains alphabetically
+    IFS=$'\n' sorted_subs=($(printf '%s\n' "${sorted_subs[@]}" | sort))
+    unset IFS
+    
+    # Prepend @/www if present
+    if [[ -n "$www_entry" ]]; then
+      sorted_subs=("$www_entry" "${sorted_subs[@]}")
+    fi
+    
+    for entry in "${sorted_subs[@]}"; do
+      local sub="${entry%%:*}"
+      local full_site="${entry#*:}"
+      local indicator="❌"
+      [[ "${site_status[$full_site]}" == "enabled" ]] && indicator="✅"
+      echo -e "    ${DIM}├─${RESET} $indicator $sub"
     done
   done
 }
@@ -208,22 +242,8 @@ strip_no_reload() {
 # == COMMANDS BEGIN ==
 
 cmd_ls() {
-  local mode="${1:-enabled}"
-  
-  case "$mode" in
-    enabled)
-      echo -e "${BOLD}Enabled sites:${RESET}"
-      display_grouped_sites "$(get_enabled_sites)"
-      ;;
-    available)
-      echo -e "${BOLD}Available sites:${RESET}"
-      display_grouped_sites "$(get_site_files)"
-      ;;
-    *)
-      print_err "Unknown ls mode: $mode. Use 'enabled' or 'available'."
-      return 1
-      ;;
-  esac
+  echo -e "${BOLD}Sites:${RESET}"
+  display_grouped_sites "$(get_site_files)" "$(get_enabled_sites)"
 }
 
 cmd_view() {
@@ -491,8 +511,7 @@ ${BOLD}ngm${RESET} - Nginx Manager
 ${BOLD}Usage:${RESET} ngm <command> [...args]
 
 ${BOLD}List Commands:${RESET}
-  ls [enabled]               List enabled sites (grouped by domain)
-  ls available               List available sites (grouped by domain)
+  ls                         List all sites (✅ enabled, ❌ disabled)
 
 ${BOLD}Interactive Commands:${RESET}
   view                       Select and view a site config with bat

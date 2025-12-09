@@ -36,11 +36,10 @@ Command-line tool for managing Nginx configs and server blocks. It lets you quic
 ### List Sites
 
 ```bash
-ngm ls             # List enabled sites
-ngm ls available   # List all available sites
+ngm ls   # List all sites with status
 ```
 
-Displays websites grouped by their domain (e.g., `blog.example.com` appears under `example.com`).
+Displays all websites grouped by domain. Enabled sites show ✅, disabled show ❌. Subdomains are sorted alphabetically, with `@/www` always first.
 
 ### Create a Website
 

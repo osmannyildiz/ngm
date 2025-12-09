@@ -15,8 +15,7 @@ ngm is a command-line tool for managing Nginx configs and server blocks. It lets
 
 ## Commands
 
-- `ngm ls`/`ngm ls enabled`: Displays enabled websites (symlinks in /etc/nginx/sites-enabled), as a list grouping subdomains by the domain and TLD. For example, under the "example.com" sublist, there can be "@/www", "blog" and "project1.demo" subdomains.
-- `ngm ls available`: Displays available websites (files in /etc/nginx/sites-available). Same display rules as the `ngm ls enabled` command.
+- `ngm ls`: Displays all websites (files in /etc/nginx/sites-available), grouped by their domain and TLD. Enabled sites are shown with ✅, disabled sites with ❌. For example, under the "example.com" group, there can be "@/www", "blog" and "project1.demo" subdomains. Subdomains are sorted alphabetically within each group, except "@/www" which is always shown first.
 - `ngm view`: Using fzf, lists the files in the `/etc/nginx/sites-available` folder in a fuzzy-searchable way. If the user presses Enter in fzf, the file will be opened in the `bat` command line utility.
 - `ngm edit`: Using fzf, lists the files in the `/etc/nginx/sites-available` folder in a fuzzy-searchable way. If the user presses Enter in fzf, the file will be opened in the default editor with sudo privileges. On exit, Nginx config will be tested and if it's valid, the service will be reloaded.
 - `ngm disable`: Using fzf, lists the symlinks in the `/etc/nginx/sites-enabled` folder in a fuzzy-searchable way. If the user presses Enter in fzf, the symlink will be removed from `/etc/nginx/sites-enabled`. On exit, Nginx service will be reloaded.

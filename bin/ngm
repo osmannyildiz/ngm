@@ -1,0 +1,549 @@
+#!/bin/bash
+
+# Without this, the script continues even if a command fails. With this, the script stops at the first command that fails.
+set -e
+
+# Paths
+SITES_AVAILABLE="/etc/nginx/sites-available"
+SITES_ENABLED="/etc/nginx/sites-enabled"
+NGINX_ACCESS_LOG="/var/log/nginx/access.log"
+NGINX_ERROR_LOG="/var/log/nginx/error.log"
+EXT=".nginx"
+
+# Colors
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+CYAN='\033[36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+print_err() { echo -e "${RED}$*${RESET}" 1>&2; }
+print_info() { echo -e "${CYAN}$*${RESET}"; }
+print_success() { echo -e "${GREEN}$*${RESET}"; }
+
+require_arg() {
+  local got="$1"; local msg="$2"
+  if [[ -z "$got" ]]; then
+    print_err "$msg"; exit 2
+  fi
+}
+
+get_editor() {
+  echo "${EDITOR:-nano}"
+}
+
+# Validate domain name (with optional subdomains)
+is_valid_domain() {
+  local name="$1"
+  # Allow letters, numbers, hyphens, dots. Must have at least one dot. No leading/trailing dots or hyphens.
+  [[ "$name" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$ ]]
+}
+
+# Get all site files (basenames without extension) from sites-available
+get_site_files() {
+  find "$SITES_AVAILABLE" -maxdepth 1 -type f -name "*$EXT" -printf '%f\n' 2>/dev/null | sed "s/$EXT$//" | sort
+}
+
+# Get enabled sites (symlink basenames without extension)
+get_enabled_sites() {
+  find "$SITES_ENABLED" -maxdepth 1 -type l -printf '%f\n' 2>/dev/null | sed "s/$EXT$//" | sort
+}
+
+# Get sites that are available but not enabled
+get_disabled_sites() {
+  local available enabled
+  available=$(get_site_files)
+  enabled=$(get_enabled_sites)
+  
+  # Use comm to find available but not enabled
+  comm -23 <(echo "$available" | sort) <(echo "$enabled" | sort) 2>/dev/null || echo "$available"
+}
+
+# Parse domain and subdomain from site name
+# e.g., "blog.example.com" -> domain="example.com", subdomain="blog"
+# e.g., "example.com" -> domain="example.com", subdomain="@/www"
+parse_domain() {
+  local site="$1"
+  local parts
+  IFS='.' read -ra parts <<< "$site"
+  local num_parts=${#parts[@]}
+  
+  if [[ $num_parts -lt 2 ]]; then
+    echo "$site" ""
+    return
+  fi
+  
+  # Get TLD and domain (last two parts)
+  local domain="${parts[$((num_parts-2))]}.${parts[$((num_parts-1))]}"
+  
+  if [[ $num_parts -eq 2 ]]; then
+    # Just domain.tld -> subdomain is @/www
+    echo "$domain" "@/www"
+  else
+    # Has subdomain(s)
+    local subdomain=""
+    for ((i=0; i<num_parts-2; i++)); do
+      if [[ -n "$subdomain" ]]; then
+        subdomain="$subdomain."
+      fi
+      subdomain="$subdomain${parts[$i]}"
+    done
+    echo "$domain" "$subdomain"
+  fi
+}
+
+# Group sites by domain and display them
+display_grouped_sites() {
+  local sites="$1"
+  
+  if [[ -z "$sites" ]]; then
+    echo "  (none)"
+    return
+  fi
+  
+  declare -A domain_groups
+  
+  while IFS= read -r site; do
+    [[ -z "$site" ]] && continue
+    read -r domain subdomain <<< "$(parse_domain "$site")"
+    if [[ -n "${domain_groups[$domain]}" ]]; then
+      domain_groups[$domain]="${domain_groups[$domain]},$subdomain"
+    else
+      domain_groups[$domain]="$subdomain"
+    fi
+  done <<< "$sites"
+  
+  # Sort and display
+  for domain in $(echo "${!domain_groups[@]}" | tr ' ' '\n' | sort); do
+    echo -e "  ${BOLD}$domain${RESET}"
+    local subs="${domain_groups[$domain]}"
+    IFS=',' read -ra sub_array <<< "$subs"
+    for sub in "${sub_array[@]}"; do
+      echo -e "    ${DIM}├─${RESET} $sub"
+    done
+  done
+}
+
+# Wrapper for fzf selection
+fzf_select() {
+  local prompt="$1"
+  local input="$2"
+  local selected
+  
+  if [[ -z "$input" ]]; then
+    print_info "No items to select from."
+    return 1
+  fi
+  
+  selected=$(echo "$input" | fzf --height=40% --reverse --prompt="$prompt") || {
+    print_info "No selection made. No action taken."
+    return 1
+  }
+  
+  if [[ -z "$selected" ]]; then
+    print_info "No selection made. No action taken."
+    return 1
+  fi
+  
+  echo "$selected"
+}
+
+# Test nginx config and reload if valid
+test_and_reload() {
+  local no_reload="$1"
+  
+  if [[ "$no_reload" == "true" ]]; then
+    print_info "Skipping reload (--no-reload flag set)."
+    return 0
+  fi
+  
+  print_info "Testing nginx configuration..."
+  if sudo nginx -t 2>&1; then
+    print_info "Reloading nginx..."
+    sudo systemctl reload nginx
+    print_success "Nginx reloaded successfully."
+  else
+    print_err "Nginx config test failed. Service not reloaded."
+    return 1
+  fi
+}
+
+# Just reload without testing (for disable)
+reload_nginx() {
+  local no_reload="$1"
+  
+  if [[ "$no_reload" == "true" ]]; then
+    print_info "Skipping reload (--no-reload flag set)."
+    return 0
+  fi
+  
+  print_info "Reloading nginx..."
+  sudo systemctl reload nginx
+  print_success "Nginx reloaded successfully."
+}
+
+# Check for --no-reload flag in args
+has_no_reload() {
+  for arg in "$@"; do
+    [[ "$arg" == "--no-reload" ]] && return 0
+  done
+  return 1
+}
+
+# Remove --no-reload from args
+strip_no_reload() {
+  for arg in "$@"; do
+    [[ "$arg" != "--no-reload" ]] && echo "$arg"
+  done
+}
+
+# == COMMANDS BEGIN ==
+
+cmd_ls() {
+  local mode="${1:-enabled}"
+  
+  case "$mode" in
+    enabled)
+      echo -e "${BOLD}Enabled sites:${RESET}"
+      display_grouped_sites "$(get_enabled_sites)"
+      ;;
+    available)
+      echo -e "${BOLD}Available sites:${RESET}"
+      display_grouped_sites "$(get_site_files)"
+      ;;
+    *)
+      print_err "Unknown ls mode: $mode. Use 'enabled' or 'available'."
+      return 1
+      ;;
+  esac
+}
+
+cmd_view() {
+  local sites
+  sites=$(get_site_files)
+  local selected
+  selected=$(fzf_select "View site config: " "$sites") || return 0
+  
+  bat "$SITES_AVAILABLE/${selected}${EXT}"
+}
+
+cmd_edit() {
+  local no_reload="false"
+  has_no_reload "$@" && no_reload="true"
+  
+  local sites
+  sites=$(get_site_files)
+  local selected
+  selected=$(fzf_select "Edit site config: " "$sites") || return 0
+  
+  local editor
+  editor=$(get_editor)
+  sudo "$editor" "$SITES_AVAILABLE/${selected}${EXT}"
+  
+  test_and_reload "$no_reload" || true
+}
+
+cmd_disable() {
+  local no_reload="false"
+  has_no_reload "$@" && no_reload="true"
+  
+  local sites
+  sites=$(get_enabled_sites)
+  local selected
+  selected=$(fzf_select "Disable site: " "$sites") || return 0
+  
+  sudo rm "$SITES_ENABLED/${selected}${EXT}"
+  print_success "Disabled: $selected"
+  
+  reload_nginx "$no_reload" || true
+}
+
+cmd_enable() {
+  local no_reload="false"
+  has_no_reload "$@" && no_reload="true"
+  
+  local sites
+  sites=$(get_disabled_sites)
+  local selected
+  selected=$(fzf_select "Enable site: " "$sites") || return 0
+  
+  sudo ln -s "$SITES_AVAILABLE/${selected}${EXT}" "$SITES_ENABLED/${selected}${EXT}"
+  print_success "Enabled: $selected"
+  
+  test_and_reload "$no_reload" || true
+}
+
+cmd_mk() {
+  local no_reload="false"
+  has_no_reload "$@" && no_reload="true"
+  
+  local args
+  mapfile -t args < <(strip_no_reload "$@")
+  local site_name="${args[0]}"
+  
+  require_arg "$site_name" "Missing site name. Usage: ngm mk <SITE_NAME> [--no-reload]"
+  
+  if ! is_valid_domain "$site_name"; then
+    print_err "Invalid domain name: $site_name"
+    return 1
+  fi
+  
+  local file_path="$SITES_AVAILABLE/${site_name}${EXT}"
+  if [[ -f "$file_path" ]]; then
+    print_err "Site already exists: $site_name"
+    return 1
+  fi
+  
+  sudo touch "$file_path"
+  print_success "Created: $site_name"
+  
+  local editor
+  editor=$(get_editor)
+  sudo "$editor" "$file_path"
+  
+  test_and_reload "$no_reload" || true
+}
+
+cmd_cp() {
+  local no_reload="false"
+  has_no_reload "$@" && no_reload="true"
+  
+  local args
+  mapfile -t args < <(strip_no_reload "$@")
+  local old_name="${args[0]}"
+  local new_name="${args[1]}"
+  
+  require_arg "$old_name" "Missing source site name. Usage: ngm cp <SITE_NAME> <NEW_SITE_NAME> [--no-reload]"
+  require_arg "$new_name" "Missing new site name. Usage: ngm cp <SITE_NAME> <NEW_SITE_NAME> [--no-reload]"
+  
+  if ! is_valid_domain "$new_name"; then
+    print_err "Invalid domain name: $new_name"
+    return 1
+  fi
+  
+  local old_path="$SITES_AVAILABLE/${old_name}${EXT}"
+  local new_path="$SITES_AVAILABLE/${new_name}${EXT}"
+  
+  if [[ ! -f "$old_path" ]]; then
+    print_err "Source site not found: $old_name"
+    return 1
+  fi
+  
+  if [[ -f "$new_path" ]]; then
+    print_err "Destination site already exists: $new_name"
+    return 1
+  fi
+  
+  sudo cp "$old_path" "$new_path"
+  print_success "Copied: $old_name -> $new_name"
+  
+  local editor
+  editor=$(get_editor)
+  sudo "$editor" "$new_path"
+  
+  test_and_reload "$no_reload" || true
+}
+
+cmd_rename() {
+  local no_reload="false"
+  has_no_reload "$@" && no_reload="true"
+  
+  local args
+  mapfile -t args < <(strip_no_reload "$@")
+  local old_name="${args[0]}"
+  local new_name="${args[1]}"
+  
+  require_arg "$old_name" "Missing old site name. Usage: ngm rename <SITE_NAME> <NEW_SITE_NAME> [--no-reload]"
+  require_arg "$new_name" "Missing new site name. Usage: ngm rename <SITE_NAME> <NEW_SITE_NAME> [--no-reload]"
+  
+  if ! is_valid_domain "$new_name"; then
+    print_err "Invalid domain name: $new_name"
+    return 1
+  fi
+  
+  local old_path="$SITES_AVAILABLE/${old_name}${EXT}"
+  local new_path="$SITES_AVAILABLE/${new_name}${EXT}"
+  
+  if [[ ! -f "$old_path" ]]; then
+    print_err "Site not found: $old_name"
+    return 1
+  fi
+  
+  if [[ -f "$new_path" ]]; then
+    print_err "Site already exists: $new_name"
+    return 1
+  fi
+  
+  # Rename config file
+  sudo mv "$old_path" "$new_path"
+  
+  # If enabled, rename symlink too
+  local old_enabled="$SITES_ENABLED/${old_name}${EXT}"
+  if [[ -L "$old_enabled" ]]; then
+    sudo rm "$old_enabled"
+    sudo ln -s "$new_path" "$SITES_ENABLED/${new_name}${EXT}"
+  fi
+  
+  print_success "Renamed: $old_name -> $new_name"
+  
+  test_and_reload "$no_reload" || true
+}
+
+cmd_status() {
+  echo -e "${BOLD}Nginx Status:${RESET}"
+  echo ""
+  
+  # Service status
+  echo -e "${CYAN}Service:${RESET}"
+  systemctl status nginx --no-pager -l 2>/dev/null | head -5 || echo "  Unable to get status"
+  echo ""
+  
+  # Site counts
+  local enabled_count available_count
+  enabled_count=$(get_enabled_sites | grep -c . || echo 0)
+  available_count=$(get_site_files | grep -c . || echo 0)
+  echo -e "${CYAN}Sites:${RESET}"
+  echo "  Enabled:   $enabled_count"
+  echo "  Available: $available_count"
+  echo ""
+  
+  # Last error log entries
+  echo -e "${CYAN}Recent errors (last 10 lines):${RESET}"
+  if [[ -r "$NGINX_ERROR_LOG" ]]; then
+    tail -10 "$NGINX_ERROR_LOG" 2>/dev/null | sed 's/^/  /' || echo "  (unable to read)"
+  else
+    sudo tail -10 "$NGINX_ERROR_LOG" 2>/dev/null | sed 's/^/  /' || echo "  (unable to read)"
+  fi
+}
+
+cmd_access_log() {
+  print_info "Following access log (Ctrl+C to stop)..."
+  sudo tail -f "$NGINX_ACCESS_LOG"
+}
+
+cmd_error_log() {
+  print_info "Following error log (Ctrl+C to stop)..."
+  sudo tail -f "$NGINX_ERROR_LOG"
+}
+
+cmd_logs() {
+  local sites
+  sites=$(get_enabled_sites)
+  local selected
+  selected=$(fzf_select "View logs for site: " "$sites") || return 0
+  
+  # Try to find site-specific log files
+  # Common patterns: /var/log/nginx/<domain>-access.log or /var/log/nginx/<domain>.access.log
+  local access_log="/var/log/nginx/${selected}-access.log"
+  local error_log="/var/log/nginx/${selected}-error.log"
+  
+  if [[ -f "$access_log" ]] || [[ -f "$error_log" ]]; then
+    print_info "Following logs for $selected (Ctrl+C to stop)..."
+    sudo tail -f "$access_log" "$error_log" 2>/dev/null
+  else
+    # Fallback: grep main logs for the domain
+    print_info "No dedicated logs found for $selected. Filtering main logs..."
+    sudo tail -f "$NGINX_ACCESS_LOG" "$NGINX_ERROR_LOG" 2>/dev/null | grep --line-buffered "$selected"
+  fi
+}
+
+cmd_reload() {
+  print_info "Reloading nginx..."
+  sudo systemctl reload nginx
+  print_success "Nginx reloaded."
+}
+
+cmd_test() {
+  print_info "Testing nginx configuration..."
+  sudo nginx -t
+}
+
+cmd_restart() {
+  print_info "Restarting nginx..."
+  sudo systemctl restart nginx
+  print_success "Nginx restarted."
+}
+
+cmd_stop() {
+  print_info "Stopping nginx..."
+  sudo systemctl stop nginx
+  print_success "Nginx stopped."
+}
+
+cmd_start() {
+  print_info "Starting nginx..."
+  sudo systemctl start nginx
+  print_success "Nginx started."
+}
+
+cmd_help() {
+  cat <<EOF
+${BOLD}ngm${RESET} - Nginx Manager
+
+${BOLD}Usage:${RESET} ngm <command> [...args]
+
+${BOLD}List Commands:${RESET}
+  ls [enabled]               List enabled sites (grouped by domain)
+  ls available               List available sites (grouped by domain)
+
+${BOLD}Interactive Commands:${RESET}
+  view                       Select and view a site config with bat
+  edit [--no-reload]         Select and edit a site config
+  disable [--no-reload]      Select and disable a site
+  enable [--no-reload]       Select and enable a disabled site
+
+${BOLD}File Commands:${RESET}
+  mk <SITE> [--no-reload]    Create a new site config
+  cp <OLD> <NEW> [--no-reload]   Duplicate a site config
+  rename <OLD> <NEW> [--no-reload]   Rename a site config
+
+${BOLD}Log Commands:${RESET}
+  access-log                 Follow the nginx access log
+  error-log                  Follow the nginx error log
+  logs                       Select a site and follow its logs
+
+${BOLD}Service Commands:${RESET}
+  status                     Show nginx status and site counts
+  test                       Test nginx configuration
+  reload                     Reload nginx
+  restart                    Restart nginx
+  start                      Start nginx
+  stop                       Stop nginx
+
+${BOLD}Other:${RESET}
+  help                       Show this help message
+EOF
+}
+
+# == COMMANDS END ==
+
+main() {
+  local cmd="${1:-}"
+  [[ $# -gt 0 ]] && shift
+
+  case "$cmd" in
+    ls)          cmd_ls "$@" ;;
+    view)        cmd_view "$@" ;;
+    edit)        cmd_edit "$@" ;;
+    disable)     cmd_disable "$@" ;;
+    enable)      cmd_enable "$@" ;;
+    mk)          cmd_mk "$@" ;;
+    cp)          cmd_cp "$@" ;;
+    rename)      cmd_rename "$@" ;;
+    status)      cmd_status "$@" ;;
+    access-log)  cmd_access_log "$@" ;;
+    error-log)   cmd_error_log "$@" ;;
+    logs)        cmd_logs "$@" ;;
+    reload)      cmd_reload "$@" ;;
+    test)        cmd_test "$@" ;;
+    restart)     cmd_restart "$@" ;;
+    stop)        cmd_stop "$@" ;;
+    start)       cmd_start "$@" ;;
+    ""|help|-h|--help) cmd_help ;;
+    *) print_err "Unknown command: $cmd"; exit 2 ;;
+  esac
+}
+
+main "$@"

@@ -6,6 +6,11 @@ set -e
 # Ensures that the exit status of a pipeline is the status of the last command to exit with a non-zero status, or zero if no command exited with a non-zero status.
 set -o pipefail
 
+if ((BASH_VERSINFO[0] < 4)); then
+  echo "Error: ngm requires Bash 4.0 or higher."
+  exit 1
+fi
+
 # Paths
 SITES_AVAILABLE="/etc/nginx/sites-available"
 SITES_ENABLED="/etc/nginx/sites-enabled"

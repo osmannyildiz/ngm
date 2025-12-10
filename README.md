@@ -88,3 +88,7 @@ ngm test     # Run nginx -t
 ngm reload   # Reload service
 ngm restart  # Restart service
 ```
+
+## Disclaimer
+
+This tool was vibe-coded. Use at your own risk.

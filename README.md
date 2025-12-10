@@ -23,7 +23,7 @@ Command-line tool for managing Nginx configs and server blocks. It lets you quic
    - `nginx`
    - `bash` (4.0+)
    - `fzf`
-   - `bat` (for viewing configs)
+   - `bat` (optional, for viewing configs)
 
 2. Copy the script to your path or symlink it:
 

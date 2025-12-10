@@ -42,6 +42,16 @@ get_editor() {
   echo "${EDITOR:-nano}"
 }
 
+get_viewer() {
+  if command -v batcat &>/dev/null; then
+    echo "batcat"
+  elif command -v bat &>/dev/null; then
+    echo "bat"
+  else
+    echo "less"
+  fi
+}
+
 # Validate domain name (with optional subdomains)
 is_valid_domain() {
   local name="$1"
@@ -274,7 +284,7 @@ cmd_view() {
   local selected
   selected=$(fzf_select "View site config: " "$sites") || return 0
   
-  bat "$SITES_AVAILABLE/${selected}${EXT}"
+  $(get_viewer) "$SITES_AVAILABLE/${selected}${EXT}"
 }
 
 cmd_edit() {

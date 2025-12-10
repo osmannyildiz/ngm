@@ -5,7 +5,7 @@ ngm is a command-line tool for managing Nginx configs and server blocks. It lets
 ## Notes
 
 - Config files will have the extension ".nginx", but that part won't be shown to or expected from the user through commands.
-- No-subdomain and www subdomain will always be managed by the same server block. This will be assumed, not enforced or verified. The file name will be the domain and TLD, wont include the "www" subdomain part. In grouped lists it will be denoted as "@/www".
+- No-subdomain and www subdomain will always be managed by the same server block. This will be assumed, not enforced or verified. The file name will be the domain and TLD, it won't include the "www" subdomain part. In grouped lists it will be denoted as "@/www".
 - If the config check fails, Nginx service won't be reloaded, instead the user will be notified of the error. Changes will still persist.
 - If fzf is exited without a selection, the command will exit, informing the user that no action was taken.
 - When we say "a valid domain name", it can include subdomains or not.

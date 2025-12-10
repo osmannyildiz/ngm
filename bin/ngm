@@ -69,12 +69,18 @@ get_disabled_sites() {
   comm -23 <(echo "$available" | sort) <(echo "$enabled" | sort) 2>/dev/null || echo "$available"
 }
 
+# Known compound TLDs (second-level domains under country codes)
+COMPOUND_TLDS="com.tr org.tr gov.tr edu.tr co.uk org.uk gov.uk com.au net.au org.au co.nz org.nz com.br org.br"
+
+# Check if a string is a compound TLD
+is_compound_tld() {
+  local candidate="$1"
+  [[ " $COMPOUND_TLDS " == *" $candidate "* ]]
+}
+
 # Parse domain and subdomain from site name
 # e.g., "blog.example.com" -> domain="example.com", subdomain="blog"
 # e.g., "example.com" -> domain="example.com", subdomain="@/www"
-# NOTE: This logic assumes a simple "TLD.Domain" structure (last 2 parts).
-# It does NOT support compound TLDs like ".co.uk" or ".com.au".
-# We won't use compound TLDs, so this naive approach is acceptable.
 parse_domain() {
   local site="$1"
   local parts
@@ -86,19 +92,30 @@ parse_domain() {
     return
   fi
   
-  # Get TLD and domain (last two parts)
-  local domain="${parts[$((num_parts-2))]}.${parts[$((num_parts-1))]}"
+  # Check for compound TLD (last 2 parts like "com.tr")
+  local tld_parts=2
+  if [[ $num_parts -ge 3 ]]; then
+    local potential_compound="${parts[$((num_parts-2))]}.${parts[$((num_parts-1))]}"
+    if is_compound_tld "$potential_compound"; then
+      tld_parts=3
+    fi
+  fi
   
-  if [[ $num_parts -eq 2 ]]; then
+  # Get domain (last tld_parts parts)
+  local domain=""
+  for ((i=num_parts-tld_parts; i<num_parts; i++)); do
+    [[ -n "$domain" ]] && domain="$domain."
+    domain="$domain${parts[$i]}"
+  done
+  
+  if [[ $num_parts -eq $tld_parts ]]; then
     # Just domain.tld -> subdomain is @/www
     echo "$domain" "@/www"
   else
     # Has subdomain(s)
     local subdomain=""
-    for ((i=0; i<num_parts-2; i++)); do
-      if [[ -n "$subdomain" ]]; then
-        subdomain="$subdomain."
-      fi
+    for ((i=0; i<num_parts-tld_parts; i++)); do
+      [[ -n "$subdomain" ]] && subdomain="$subdomain."
       subdomain="$subdomain${parts[$i]}"
     done
     echo "$domain" "$subdomain"

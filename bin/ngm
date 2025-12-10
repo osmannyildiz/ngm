@@ -510,8 +510,7 @@ cmd_start() {
 }
 
 cmd_help() {
-  cat <<EOF
-${BOLD}ngm${RESET} - Nginx Manager
+  echo -e "${BOLD}ngm${RESET} - Nginx Manager
 
 ${BOLD}Usage:${RESET} ngm <command> [...args]
 
@@ -543,8 +542,7 @@ ${BOLD}Service Commands:${RESET}
   stop                       Stop nginx
 
 ${BOLD}Other:${RESET}
-  help                       Show this help message
-EOF
+  help                       Show this help message"
 }
 
 # == COMMANDS END ==

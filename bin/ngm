@@ -196,7 +196,7 @@ fzf_select() {
 }
 
 # Test nginx config and reload if valid
-test_and_reload() {
+test_and_reload_nginx() {
   local no_reload="$1"
   
   if [[ "$no_reload" == "true" ]]; then
@@ -273,7 +273,7 @@ cmd_edit() {
   editor=$(get_editor)
   sudo $editor "$SITES_AVAILABLE/${selected}${EXT}"
   
-  test_and_reload "$no_reload" || true
+  test_and_reload_nginx "$no_reload" || true
 }
 
 cmd_disable() {
@@ -303,7 +303,7 @@ cmd_enable() {
   sudo ln -s "$SITES_AVAILABLE/${selected}${EXT}" "$SITES_ENABLED/${selected}${EXT}"
   print_success "Enabled: $selected"
   
-  test_and_reload "$no_reload" || true
+  test_and_reload_nginx "$no_reload" || true
 }
 
 cmd_mk() {
@@ -334,7 +334,7 @@ cmd_mk() {
   editor=$(get_editor)
   sudo $editor "$file_path"
   
-  test_and_reload "$no_reload" || true
+  test_and_reload_nginx "$no_reload" || true
 }
 
 cmd_cp() {
@@ -374,7 +374,7 @@ cmd_cp() {
   editor=$(get_editor)
   sudo $editor "$new_path"
   
-  test_and_reload "$no_reload" || true
+  test_and_reload_nginx "$no_reload" || true
 }
 
 cmd_rename() {
@@ -419,7 +419,7 @@ cmd_rename() {
   
   print_success "Renamed: $old_name -> $new_name"
   
-  test_and_reload "$no_reload" || true
+  test_and_reload_nginx "$no_reload" || true
 }
 
 cmd_status() {

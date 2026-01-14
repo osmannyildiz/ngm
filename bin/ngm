@@ -191,7 +191,7 @@ display_grouped_sites() {
     local total=${#sorted_subs[@]}
     local i=0
     for entry in "${sorted_subs[@]}"; do
-      ((i++))
+      ((i++)) || true
       local sub="${entry%%:*}"
       local full_site="${entry#*:}"
       local indicator="❌"

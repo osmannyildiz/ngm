@@ -20,6 +20,7 @@ Command-line tool for managing Nginx configs and server blocks. It lets you quic
 ## Installation
 
 1. Ensure you have the required dependencies:
+
    - `nginx`
    - `bash` (4.0+)
    - `fzf`
@@ -40,6 +41,17 @@ ngm ls   # List all sites with status
 ```
 
 Displays all websites grouped by domain. Enabled sites show ✅, disabled show ❌. Subdomains are sorted alphabetically, with `@/www` always first.
+
+```
+Sites:
+  example.com
+    ├─ ✅ @/www
+    └─ ❌ api
+  otherdomain.org
+    ├─ ✅ @/www
+    ├─ ❌ blog
+    └─ ✅ shop
+```
 
 ### Create a Website
 

@@ -188,12 +188,17 @@ display_grouped_sites() {
       sorted_subs=("$www_entry" "${sorted_subs[@]}")
     fi
     
+    local total=${#sorted_subs[@]}
+    local i=0
     for entry in "${sorted_subs[@]}"; do
+      ((i++))
       local sub="${entry%%:*}"
       local full_site="${entry#*:}"
       local indicator="❌"
       [[ "${site_status[$full_site]}" == "enabled" ]] && indicator="✅"
-      echo -e "    ${DIM}├─${RESET} $indicator $sub"
+      local prefix="├─"
+      [[ $i -eq $total ]] && prefix="└─"
+      echo -e "    ${DIM}${prefix}${RESET} $indicator $sub"
     done
   done
 }
